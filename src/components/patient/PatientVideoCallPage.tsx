@@ -1,173 +1,196 @@
-import { useState, useEffect, useRef } from 'react';
-import { useParams } from 'react-router-dom';
-import io from 'socket.io-client';
-import Peer from 'peerjs';
+import React, { useState, useEffect, useRef } from 'react';
+import Peer, { MediaConnection } from 'peerjs';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
-export default function PatientVideoCallPage() {
-  const { id: appointmentId } = useParams();
-  const [peers, setPeers] = useState({});
-  const [myStream, setMyStream] = useState<any>(null);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(false);
-  const socketRef = useRef<any>(null);
-  const peerRef = useRef<any>(null);
-  const userVideoRef = useRef<any>(null);
-  const peersRef = useRef({});
-  // const roomIdRef = useRef(appointmentId);
+const PatientVideoCallPage: React.FC = () => {
+  const [peerId, setPeerId] = useState<string>('');
+  const [remotePeerIdInput, setRemotePeerIdInput] = useState<string>('');
+  const [myStream, setMyStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [callInProgress, setCallInProgress] = useState<boolean>(false);
+
+  const peerInstance = useRef<Peer | null>(null);
+  const currentCall = useRef<MediaConnection | null>(null);
+  const currentUserVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteUserVideoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    socketRef.current = io(import.meta.env.VITE_SOCKET_SERVER_URL || 'http://localhost:3001', {
-      transports: ['websocket']
+    // Initialize PeerJS
+    const peer = new Peer();
+    peerInstance.current = peer;
+
+    peer.on('open', (id) => {
+      console.log('My PeerJS ID is:', id);
+      setPeerId(id);
+      // Get user media (camera and microphone)
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        .then((stream) => {
+          setMyStream(stream);
+          if (currentUserVideoRef.current) {
+            currentUserVideoRef.current.srcObject = stream;
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to get local stream', err);
+          alert('Failed to access camera and microphone. Please check permissions.');
+        });
     });
-    
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
+
+    peer.on('call', (call) => {
+      console.log('Incoming call from:', call.peer);
+      if (!myStream) {
+        console.error('Cannot answer call without local stream.');
+        alert('Local video stream is not ready. Cannot answer call.');
+        return;
       }
-      if (peerRef.current) {
-        peerRef.current.destroy();
+      // Answer the call with the local stream
+      call.answer(myStream);
+      currentCall.current = call; // Store the call object
+      setCallInProgress(true);
+      setRemotePeerIdInput(call.peer); // Store the caller's ID
+
+      call.on('stream', (remoteStream) => {
+        console.log('Received remote stream');
+        setRemoteStream(remoteStream);
+        if (remoteUserVideoRef.current) {
+          remoteUserVideoRef.current.srcObject = remoteStream;
+        }
+      });
+
+      call.on('close', () => {
+        console.log('Call closed by remote peer');
+        endCall();
+      });
+
+      call.on('error', (err) => {
+        console.error('PeerJS call error:', err);
+        endCall();
+      });
+    });
+
+    peer.on('error', (err) => {
+      console.error('PeerJS error:', err);
+      alert(`PeerJS error: ${err.message}. Please refresh the page.`);
+    });
+
+    // Cleanup on component unmount
+    return () => {
+      console.log('Cleaning up PeerJS connection');
+      if (currentCall.current) {
+        currentCall.current.close();
+        currentCall.current = null;
+      }
+      if (peerInstance.current) {
+        peerInstance.current.destroy();
+        peerInstance.current = null;
+      }
+      if (myStream) {
+        myStream.getTracks().forEach(track => track.stop());
       }
     };
-  }, []);
+  }, [myStream]); // Re-run effect if myStream changes
 
-  useEffect(() => {
-    if (!appointmentId) return;
-    
-    // Clean up any existing connections
-    if (peerRef.current) {
-      peerRef.current.destroy();
+  const callPeer = (remotePeerId: string) => {
+    if (!peerInstance.current) {
+      alert('Peer connection not established yet.');
+      return;
     }
-    
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(stream => {
-        setMyStream(stream as MediaStream);
-        if (userVideoRef.current) {
-          userVideoRef.current.srcObject = stream;
-        }
-        
-        peerRef.current = new Peer();
-        
-        peerRef.current.on('open', (id: any) => {
-          socketRef.current.emit('join-room', appointmentId, id);
-          
-          // Handle existing users in the room
-          socketRef.current.on('existing-users', (users: any) => {
-            users.forEach((userId: string) => {
-              const call = peerRef.current.call(userId, stream);
-              call.on('stream', (userStream: MediaStream) => {
-                addPeer(userId, userStream);
-              });
-            });
-          });
-        });
-        
-        peerRef.current.on('error', (err: any) => {
-          console.error('Peer connection error:', err);
-        });
+    if (!myStream) {
+      alert('Local video stream not ready. Cannot make call.');
+      return;
+    }
+    if (!remotePeerId) {
+      alert('Please enter the Provider\'s Peer ID.');
+      return;
+    }
 
-        peerRef.current.on('call', (call: any) => {
-          call.answer(stream);
-          call.on('stream', (userStream: MediaStream) => {
-            addPeer(call.peer, userStream);
-          });
-        });
+    console.log(`Calling peer: ${remotePeerId}`);
+    const call = peerInstance.current.call(remotePeerId, myStream);
+    currentCall.current = call; // Store the call object
+    setCallInProgress(true);
 
-        socketRef.current.on('user-connected', (userId: any) => {
-          const call = peerRef.current.call(userId, stream);
-          call.on('stream', (userStream: MediaStream) => {
-            addPeer(userId, userStream);
-          });
-          call.on('close', () => {
-            removePeer(userId);
-          });
-        });
+    call.on('stream', (remoteStream) => {
+      console.log('Received remote stream from initiated call');
+      setRemoteStream(remoteStream);
+      if (remoteUserVideoRef.current) {
+        remoteUserVideoRef.current.srcObject = remoteStream;
+      }
+    });
 
-        socketRef.current.on('user-disconnected', (userId: any) => {
-          removePeer(userId);
-        });
-      })
-      .catch(err => {
-        console.error('Failed to get media devices', err);
-      });
-  }, [appointmentId]);
+    call.on('close', () => {
+      console.log('Call closed');
+      endCall();
+    });
 
-  const addPeer = (peerId: string, stream: MediaStream) => {
-    const newPeers = { ...peersRef.current, [peerId]: stream };
-    peersRef.current = newPeers;
-    setPeers(newPeers);
+    call.on('error', (err) => {
+      console.error('PeerJS call error:', err);
+      alert(`Call failed: ${err.message}`);
+      endCall();
+    });
   };
 
-  const removePeer = (peerId: any) => {
-    const newPeers = { ...peersRef.current };
-    delete (newPeers as { [key: string]: MediaStream })[peerId];
-    peersRef.current = newPeers;
-    setPeers(newPeers);
-  };
-
-  const toggleMute = () => {
-    if (myStream) {
-      myStream.getAudioTracks()[0].enabled = !isMuted;
-      setIsMuted(!isMuted);
+  const endCall = () => {
+    console.log('Ending call');
+    if (currentCall.current) {
+      currentCall.current.close();
+      currentCall.current = null;
     }
-  };
-
-  const toggleVideo = () => {
-    if (myStream) {
-      myStream.getVideoTracks()[0].enabled = !isVideoOff;
-      setIsVideoOff(!isVideoOff);
-    }
+    setRemoteStream(null);
+    setCallInProgress(false);
+    // Keep remotePeerIdInput as the patient might need to reconnect
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold text-center mb-8">Video Consultation</h1>
-        
-        <div>
-          <div className="flex justify-between mb-4">
-            <div className="font-medium">Appointment ID: {appointmentId}</div>
-            <div className="flex space-x-2">
-              <button 
-                onClick={toggleMute}
-                className={`px-3 py-1 rounded ${isMuted ? 'bg-red-500' : 'bg-gray-200'}`}
-              >
-                {isMuted ? 'Unmute' : 'Mute'}
-              </button>
-              <button 
-                onClick={toggleVideo}
-                className={`px-3 py-1 rounded ${isVideoOff ? 'bg-red-500' : 'bg-gray-200'}`}
-              >
-                {isVideoOff ? 'Turn On Video' : 'Turn Off Video'}
-              </button>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-black rounded-lg overflow-hidden">
-              <video 
-                ref={userVideoRef} 
-                autoPlay 
-                playsInline 
-                muted 
-                className="w-full h-full"
+    <div className="p-4 flex flex-col items-center space-y-4">
+      <Card className="w-full max-w-4xl">
+        <CardHeader>
+          <CardTitle>Patient Video Call</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p>Your Peer ID: <span className="font-mono bg-gray-200 px-2 py-1 rounded">{peerId || 'Initializing...'}</span></p>
+          <p className="text-sm text-gray-600">Share this ID with the provider if needed, or use their ID to call.</p>
+
+          {!callInProgress ? (
+            <div className="flex items-center space-x-2">
+              <Input
+                type="text"
+                placeholder="Enter Provider's Peer ID"
+                value={remotePeerIdInput}
+                onChange={(e) => setRemotePeerIdInput(e.target.value)}
+                className="flex-grow"
               />
+              <Button onClick={() => callPeer(remotePeerIdInput)} disabled={!peerId || !myStream}>
+                Call Provider
+              </Button>
             </div>
-            
-            {Object.entries(peers).map(([peerId, stream]) => (
-              <div key={peerId} className="bg-black rounded-lg overflow-hidden">
-                <video 
-                  autoPlay 
-                  playsInline 
-                  className="w-full h-full"
-                  ref={video => {
-                    if (video) video.srcObject = stream as MediaStream;
-                  }}
-                />
-              </div>
-            ))}
+          ) : (
+            <Button onClick={endCall} variant="destructive">
+              End Call
+            </Button>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="border rounded p-2">
+              <h3 className="text-center font-semibold mb-2">Your Video</h3>
+              <video ref={currentUserVideoRef} muted autoPlay playsInline className="w-full h-auto bg-black rounded" />
+            </div>
+            <div className="border rounded p-2">
+              <h3 className="text-center font-semibold mb-2">Provider's Video</h3>
+              {remoteStream ? (
+                <video ref={remoteUserVideoRef} autoPlay playsInline className="w-full h-auto bg-black rounded" />
+              ) : (
+                <div className="w-full aspect-video bg-gray-200 flex items-center justify-center rounded">
+                  <p className="text-gray-500">{callInProgress ? 'Connecting...' : 'Waiting for call...'}</p>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
-}
+};
+
+export default PatientVideoCallPage;
