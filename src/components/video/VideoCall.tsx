@@ -203,22 +203,31 @@ export default function VideoCall({ appointmentId, userId }: VideoCallProps) {
       
       // Handle remote stream
       pc.ontrack = (event) => {
+        console.log('Received remote track:', event);
         if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = event.streams[0];
-          setRemoteStream(event.streams[0]);
+          const remoteStream = new MediaStream();
+          event.streams[0].getTracks().forEach(track => {
+            remoteStream.addTrack(track);
+          });
+          remoteVideoRef.current.srcObject = remoteStream;
+          setRemoteStream(remoteStream);
         }
       };
       
       // Handle ICE candidates
       pc.onicecandidate = (event) => {
+        console.log('ICE candidate:', event.candidate);
         if (event.candidate) {
-          wsRef.current?.send(JSON.stringify({
-            user_id: userId,
-            appointment_id: appointmentId,
-            action: 'ice_candidate',
-            target_user: usersInCall.find(u => u !== userId),
-            candidate: event.candidate.candidate
-          }));
+          const targetUser = usersInCall.find(u => u !== userId);
+          if (targetUser) {
+            wsRef.current?.send(JSON.stringify({
+              user_id: userId,
+              appointment_id: appointmentId,
+              action: 'ice_candidate',
+              target_user: targetUser,
+              candidate: event.candidate.candidate
+            }));
+          }
         }
       };
       
