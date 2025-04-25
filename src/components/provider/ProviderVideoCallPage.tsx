@@ -31,43 +31,39 @@ const ProviderVideoCallPage: React.FC = () => {
           if (currentUserVideoRef.current) {
             currentUserVideoRef.current.srcObject = stream;
           }
+
+          // Set up the incoming call handler ONLY after the stream is ready
+          peer.on('call', (call) => {
+            console.log('Incoming call from:', call.peer);
+            // No need to check for myStream here as this runs after it's set
+            // Answer the call with the local stream
+            call.answer(stream); // Use the obtained stream directly
+            currentCall.current = call; // Store the call object
+            setCallInProgress(true);
+
+            call.on('stream', (remoteStream) => {
+              console.log('Received remote stream');
+              setRemoteStream(remoteStream);
+              if (remoteUserVideoRef.current) {
+                remoteUserVideoRef.current.srcObject = remoteStream;
+              }
+            });
+
+            call.on('close', () => {
+              console.log('Call closed by remote peer');
+              endCall();
+            });
+
+            call.on('error', (err) => {
+              console.error('PeerJS call error:', err);
+              endCall();
+            });
+          });
         })
         .catch((err) => {
           console.error('Failed to get local stream', err);
           alert('Failed to access camera and microphone. Please check permissions.');
         });
-    });
-
-    peer.on('call', (call) => {
-      console.log('Incoming call from:', call.peer);
-      if (!myStream) {
-        console.error('Cannot answer call without local stream.');
-        // Optionally, try to get the stream again here if it failed initially
-        alert('Local video stream is not ready. Cannot answer call.');
-        return;
-      }
-      // Answer the call with the local stream
-      call.answer(myStream);
-      currentCall.current = call; // Store the call object
-      setCallInProgress(true);
-
-      call.on('stream', (remoteStream) => {
-        console.log('Received remote stream');
-        setRemoteStream(remoteStream);
-        if (remoteUserVideoRef.current) {
-          remoteUserVideoRef.current.srcObject = remoteStream;
-        }
-      });
-
-      call.on('close', () => {
-        console.log('Call closed by remote peer');
-        endCall();
-      });
-
-      call.on('error', (err) => {
-        console.error('PeerJS call error:', err);
-        endCall();
-      });
     });
 
     peer.on('error', (err) => {
