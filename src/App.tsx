@@ -38,7 +38,7 @@ import PatientVideoCallPage from "./components/patient/PatientVideoCallPage";
 import AdminAppointmentsList from "./components/admin/AdminAppointmentsList";
 
 function App() {
-  const [_jwtToken, setJwtToken] = useState("");
+  // const [jwtToken, setJwtToken] = useState("");
   const [userData, setUserData] = useState(null);
   const [initialCheckComplete, setInitialCheckComplete] = useState(false); // Add state to track initial check
   const { getToken, isSignedIn } = useAuth();
