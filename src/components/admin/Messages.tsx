@@ -50,7 +50,7 @@ export default function Messages() {
         const token = await getToken()
         if (!token) return
         
-        const apiUrl = `${import.meta.env.VITE_API_BASE_URL}/me`;
+        const apiUrl = `${import.meta.env.VITE_API_BASE_URL}/me/`;
         const response = await fetch(apiUrl, {
           headers: {
             'Authorization': `Bearer ${token}`
