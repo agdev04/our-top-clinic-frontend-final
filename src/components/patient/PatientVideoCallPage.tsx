@@ -90,7 +90,7 @@ const PatientVideoCallPage: React.FC = () => {
         myStream.getTracks().forEach(track => track.stop());
       }
     };
-  }, [myStream]); // Re-run effect if myStream changes
+  }, []); // Re-run effect if myStream changes
 
   const callPeer = (remotePeerId: string) => {
     if (!peerInstance.current) {
