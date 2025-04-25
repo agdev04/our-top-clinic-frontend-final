@@ -1,207 +1,173 @@
-import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
-import { useAuth } from "@clerk/clerk-react";
-import { Button } from "@/components/ui/button";
+import { useState, useEffect, useRef } from 'react';
+import { useParams } from 'react-router-dom';
+import io from 'socket.io-client';
+import Peer from 'peerjs';
 
 export default function ProviderVideoCallPage() {
   const { id: appointmentId } = useParams();
-  const { userId } = useAuth();
-  const [socket, setSocket] = useState<WebSocket | null>(null);
-  const [peerConnection, setPeerConnection] = useState<RTCPeerConnection | null>(null);
-  const [_remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const [peers, setPeers] = useState({});
+  const [myStream, setMyStream] = useState<any>(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
+  const socketRef = useRef<any>(null);
+  const peerRef = useRef<any>(null);
+  const userVideoRef = useRef<any>(null);
+  const peersRef = useRef({});
+  // const roomIdRef = useRef(appointmentId);
 
   useEffect(() => {
-    if (!appointmentId || !userId) return;
-
-    // Initialize WebSocket connection
-    const ws = new WebSocket(`${import.meta.env.VITE_WS_BASE_URL}/ws/presence/${appointmentId}`);
-    setSocket(ws);
-
-    // Initialize WebRTC peer connection
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    socketRef.current = io(import.meta.env.VITE_SOCKET_SERVER_URL || 'http://localhost:3001', {
+      transports: ['websocket']
     });
-    setPeerConnection(pc);
     
-    // Queue for ICE candidates received before remote description is set
-    const iceCandidateQueue: RTCIceCandidate[] = [];
-
-    // Handle incoming ICE candidates
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log('Local ICE candidate:', event.candidate);
-        try {
-          ws.send(JSON.stringify({
-            user_id: userId,
-            action: 'ice_candidate',
-            target_user: 'patient',
-            candidate: event.candidate
-          }));
-        } catch (error) {
-          console.error('Error sending ICE candidate:', error);
-        }
-      } else {
-        console.log('All ICE candidates have been gathered');
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+      if (peerRef.current) {
+        peerRef.current.destroy();
       }
     };
+  }, []);
 
-    // Handle remote stream
-    pc.ontrack = (event) => {
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = event.streams[0];
-        setRemoteStream(event.streams[0]);
-      }
-    };
-
-    // Get user media
+  useEffect(() => {
+    if (!appointmentId) return;
+    
+    // Clean up any existing connections
+    if (peerRef.current) {
+      peerRef.current.destroy();
+    }
+    
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       .then(stream => {
-        console.log('Local media stream obtained');
-        setLocalStream(stream);
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
+        setMyStream(stream as MediaStream);
+        if (userVideoRef.current) {
+          userVideoRef.current.srcObject = stream;
         }
-        // Only add tracks if peer connection is open
-        if (pc.signalingState !== 'closed') {
-          stream.getTracks().forEach(track => {
-            pc.addTrack(track, stream);
-            console.log(`Added ${track.kind} track to peer connection`);
-          });
-        }
-      })
-      .catch(error => {
-        console.error('Error accessing media devices:', error);
-        alert('Could not access camera/microphone. Please check permissions.');
-      });
-
-    // WebSocket message handling
-    ws.onmessage = async (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('WebSocket message received:', data.type);
         
-        if (data.type === 'webrtc_answer') {
-          if (pc.signalingState !== 'closed') {
-            try {
-              console.log('Setting remote description:', data.sdp);
-              await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-              
-              // Process queued ICE candidates now that remote description is set
-              while (iceCandidateQueue.length > 0) {
-                const candidate = iceCandidateQueue.shift();
-                if (candidate) {
-                  await pc.addIceCandidate(candidate);
-                }
-              }
-            } catch (error) {
-              console.error('Error setting remote description:', error);
-            }
-          }
-        } else if (data.type === 'webrtc_ice_candidate') {
-          console.log('Remote ICE candidate received:', data.candidate);
-          const candidate = new RTCIceCandidate(data.candidate);
+        peerRef.current = new Peer();
+        
+        peerRef.current.on('open', (id: any) => {
+          socketRef.current.emit('join-room', appointmentId, id);
           
-          if (pc.signalingState !== 'closed' && pc.remoteDescription) {
-            try {
-              await pc.addIceCandidate(candidate);
-            } catch (error) {
-              console.error('Error adding ICE candidate:', error);
-            }
-          } else {
-            // Queue candidate if remote description isn't set yet
-            iceCandidateQueue.push(candidate);
-            console.log('Queued ICE candidate until remote description is set');
-          }
-        }
-      } catch (error) {
-        console.error('Error processing WebSocket message:', error);
-      }
-    };
+          // Handle existing users in the room
+          socketRef.current.on('existing-users', (users: any) => {
+            users.forEach((userId: string) => {
+              const call = peerRef.current.call(userId, stream);
+              call.on('stream', (userStream: MediaStream) => {
+                addPeer(userId, userStream);
+              });
+            });
+          });
+        });
+        
+        peerRef.current.on('error', (err: any) => {
+          console.error('Peer connection error:', err);
+        });
 
-    // Join the call and create offer
-    ws.onopen = async () => {
-      ws.send(JSON.stringify({
-        user_id: userId,
-        action: 'join'
-      }));
-      
-      // Create offer as the provider
-      if (pc.signalingState !== 'closed') {
-        try {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          ws.send(JSON.stringify({
-            user_id: userId,
-            action: 'offer',
-            target_user: 'patient',
-            sdp: offer
-          }));
-        } catch (error) {
-          console.error('Error creating offer:', error);
-        }
-      }
-    };
+        peerRef.current.on('call', (call: any) => {
+          call.answer(stream);
+          call.on('stream', (userStream: MediaStream) => {
+            addPeer(call.peer, userStream);
+          });
+        });
 
-    return () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
-      }
-      if (pc.signalingState !== 'closed') {
-        pc.close();
-      }
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, [appointmentId, userId]);
+        socketRef.current.on('user-connected', (userId: any) => {
+          const call = peerRef.current.call(userId, stream);
+          call.on('stream', (userStream: MediaStream) => {
+            addPeer(userId, userStream);
+          });
+          call.on('close', () => {
+            removePeer(userId);
+          });
+        });
 
-  const endCall = () => {
-    if (socket) {
-      socket.send(JSON.stringify({
-        user_id: userId,
-        action: 'leave'
-      }));
+        socketRef.current.on('user-disconnected', (userId: any) => {
+          removePeer(userId);
+        });
+      })
+      .catch(err => {
+        console.error('Failed to get media devices', err);
+      });
+  }, [appointmentId]);
+
+  const addPeer = (peerId: string, stream: MediaStream) => {
+    const newPeers = { ...peersRef.current, [peerId]: stream };
+    peersRef.current = newPeers;
+    setPeers(newPeers);
+  };
+
+  const removePeer = (peerId: any) => {
+    const newPeers = { ...peersRef.current };
+    delete (newPeers as { [key: string]: MediaStream })[peerId];
+    peersRef.current = newPeers;
+    setPeers(newPeers);
+  };
+
+  const toggleMute = () => {
+    if (myStream) {
+      myStream.getAudioTracks()[0].enabled = !isMuted;
+      setIsMuted(!isMuted);
     }
-    if (peerConnection) {
-      peerConnection.close();
-    }
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
+  };
+
+  const toggleVideo = () => {
+    if (myStream) {
+      myStream.getVideoTracks()[0].enabled = !isVideoOff;
+      setIsVideoOff(!isVideoOff);
     }
   };
 
   return (
-    <div className="flex flex-col items-center justify-center p-4">
-      <h1 className="text-2xl font-bold mb-4">Video Consultation</h1>
-      <div className="flex gap-4 mb-4">
-        <div className="border rounded-lg overflow-hidden">
-          <video 
-            ref={localVideoRef} 
-            autoPlay 
-            muted 
-            className="w-64 h-48 object-cover"
-          />
-          <p className="text-center p-2 bg-gray-100">You</p>
-        </div>
-        <div className="border rounded-lg overflow-hidden">
-          <video 
-            ref={remoteVideoRef} 
-            autoPlay 
-            className="w-64 h-48 object-cover"
-          />
-          <p className="text-center p-2 bg-gray-100">Patient</p>
+    <div className="min-h-screen bg-gray-100 p-4">
+      <div className="max-w-4xl mx-auto">
+        <h1 className="text-3xl font-bold text-center mb-8">Video Consultation</h1>
+        
+        <div>
+          <div className="flex justify-between mb-4">
+            <div className="font-medium">Appointment ID: {appointmentId}</div>
+            <div className="flex space-x-2">
+              <button 
+                onClick={toggleMute}
+                className={`px-3 py-1 rounded ${isMuted ? 'bg-red-500' : 'bg-gray-200'}`}
+              >
+                {isMuted ? 'Unmute' : 'Mute'}
+              </button>
+              <button 
+                onClick={toggleVideo}
+                className={`px-3 py-1 rounded ${isVideoOff ? 'bg-red-500' : 'bg-gray-200'}`}
+              >
+                {isVideoOff ? 'Turn On Video' : 'Turn Off Video'}
+              </button>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-black rounded-lg overflow-hidden">
+              <video 
+                ref={userVideoRef} 
+                autoPlay 
+                playsInline 
+                muted 
+                className="w-full h-full"
+              />
+            </div>
+            
+            {Object.entries(peers).map(([peerId, stream]) => (
+              <div key={peerId} className="bg-black rounded-lg overflow-hidden">
+                <video 
+                  autoPlay 
+                  playsInline 
+                  className="w-full h-full"
+                  ref={video => {
+                    if (video) video.srcObject = stream as MediaStream;
+                  }}
+                />
+              </div>
+            ))}
+          </div>
         </div>
       </div>
-      <Button 
-        variant="destructive" 
-        onClick={endCall}
-        className="mt-4"
-      >
-        End Call
-      </Button>
     </div>
-  )
+  );
 }
