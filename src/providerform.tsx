@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import { uploadImage } from '../lib/uploadImage';
 import { Input } from '@/components/ui/input';
+import { uploadImage } from './lib/uploadimage';
 
 interface ProviderFormProps {
   onSuccess: () => void;
