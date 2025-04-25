@@ -44,9 +44,7 @@ const ProviderVideoCallPage: React.FC = () => {
             call.on('stream', (remoteStream) => {
               console.log('Received remote stream');
               setRemoteStream(remoteStream);
-              if (remoteUserVideoRef.current) {
-                remoteUserVideoRef.current.srcObject = remoteStream;
-              }
+              // Removed direct assignment from here
             });
 
             call.on('close', () => {
@@ -111,9 +109,7 @@ const ProviderVideoCallPage: React.FC = () => {
     call.on('stream', (remoteStream) => {
       console.log('Received remote stream from initiated call');
       setRemoteStream(remoteStream);
-      if (remoteUserVideoRef.current) {
-        remoteUserVideoRef.current.srcObject = remoteStream;
-      }
+      // Removed direct assignment from here
     });
 
     call.on('close', () => {
@@ -139,6 +135,13 @@ const ProviderVideoCallPage: React.FC = () => {
     // Optionally clear the remote peer ID input
     // setRemotePeerIdInput('');
   };
+
+  // New useEffect to handle remote stream attachment
+  useEffect(() => {
+    if (remoteStream && remoteUserVideoRef.current) {
+      remoteUserVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream]);
 
   return (
     <div className="p-4 flex flex-col items-center space-y-4">
