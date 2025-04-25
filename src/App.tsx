@@ -54,7 +54,7 @@ function App() {
           setInitialCheckComplete(true); // Mark check as complete even if no token
           return;
         }
-        const apiUrl = `${import.meta.env.VITE_API_BASE_URL}/me`;
+        const apiUrl = `${import.meta.env.VITE_API_BASE_URL}/me/`;
         const response = await fetch(apiUrl, {
           headers: { Authorization: `Bearer ${token}` },
         });

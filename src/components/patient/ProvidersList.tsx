@@ -54,7 +54,7 @@ export default function ProvidersList() {
           offset: offset.toString(),
           status: status ?? '',
         });
-        const apiUrl = `${import.meta.env.VITE_API_BASE_URL}/providers?${searchParams.toString()}`;
+        const apiUrl = `${import.meta.env.VITE_API_BASE_URL}/providers/?${searchParams.toString()}`;
         const response = await fetch(apiUrl, {
           headers: { 'Authorization': `Bearer ${token}` },
         });

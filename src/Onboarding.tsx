@@ -15,7 +15,7 @@ export default function Onboarding() {
     setSelectedRole(role);
     const token = await getToken();
     if (!token) return;
-    const apiUrl = `${import.meta.env.VITE_API_BASE_URL}/onboarding`;
+    const apiUrl = `${import.meta.env.VITE_API_BASE_URL}/onboarding/`;
     await fetch(apiUrl, {
       method: 'POST',
       headers: {
